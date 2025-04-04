@@ -6,13 +6,17 @@ from scipy.io.wavfile import write
 import whisper
 from vad import EnergyVAD
 
+# 🧠 Detect default sample rate for current input device
+default_input = sd.query_devices(kind='input')
+sample_rate = int(default_input['default_samplerate'])  # Auto-adjust to Pi-supported rate
+print(f"🎙️ Using sample rate: {sample_rate} Hz")
+
 # Parameters
-sample_rate = 16000
 gain = 2.0
 chunk_duration = 5  # seconds
 merged_filename = 'final_clean_output.wav'
 
-# Initialize VAD
+# Initialize VAD with dynamic sample rate
 vad = EnergyVAD(
     sample_rate=sample_rate,
     frame_length=25,
@@ -24,14 +28,14 @@ vad = EnergyVAD(
 # Shared flags and data
 speech_detected = False
 stop_recording = False
-first_chunk_with_speech = None  # This will store the first detected speech chunk
+first_chunk_with_speech = None
 
-# VAD Monitor Thread
+# 🛎️ VAD Monitor Thread
 def vad_monitor():
     global speech_detected, stop_recording, first_chunk_with_speech
     print("🔍 Waiting for speech to start recording...")
 
-    # Wait until speech is first detected
+    # Wait for first speech
     while not speech_detected:
         audio = sd.rec(int(chunk_duration * sample_rate), samplerate=sample_rate, channels=1, dtype='float32')
         sd.wait()
@@ -39,12 +43,12 @@ def vad_monitor():
         audio = np.clip(audio, -1.0, 1.0)
         if np.any(vad(audio.flatten())):
             speech_detected = True
-            first_chunk_with_speech = audio  # Save the first chunk with speech
+            first_chunk_with_speech = audio
             print("✅ Speech detected! Starting actual recording...")
         else:
             print("⏳ No speech yet, checking again...")
 
-    # Keep monitoring for silence while recording
+    # Continue monitoring for silence
     while not stop_recording:
         audio = sd.rec(int(chunk_duration * sample_rate), samplerate=sample_rate, channels=1, dtype='float32')
         sd.wait()
@@ -56,22 +60,22 @@ def vad_monitor():
         else:
             print("🎙️ Still hearing speech... continuing.")
 
-# Start VAD monitor thread
+# 🚀 Start VAD thread
 vad_thread = threading.Thread(target=vad_monitor)
 vad_thread.start()
 
-# Wait for speech to be detected
+# Wait until speech is detected
 while not speech_detected:
     time.sleep(0.1)
 
-# Start continuous recording
-recorded_audio = [first_chunk_with_speech]  # Include the first 5-sec detected chunk
+# 🎧 Start continuous recording
+recorded_audio = [first_chunk_with_speech]  # Include the initial 5s with speech
 stream = sd.InputStream(samplerate=sample_rate, channels=1, dtype='float32')
 stream.start()
-print("🎧 Recording...")
+print("🎤 Recording...")
 
 while not stop_recording:
-    audio_chunk, _ = stream.read(int(0.5 * sample_rate))  # 0.5 sec chunks
+    audio_chunk, _ = stream.read(int(0.5 * sample_rate))  # Read 0.5s chunks
     audio_chunk *= gain
     audio_chunk = np.clip(audio_chunk, -1.0, 1.0)
     recorded_audio.append(audio_chunk)
@@ -80,12 +84,13 @@ stream.stop()
 stream.close()
 print("✅ Recording stopped.")
 
-# Merge and save final audio
+# 💾 Save final audio
 final_audio = np.concatenate(recorded_audio, axis=0)
 write(merged_filename, sample_rate, final_audio.astype(np.float32))
-print(f"💾 Final audio saved as {merged_filename}")
+print(f"📁 Final audio saved as {merged_filename}")
 
-# Transcribe with Whisper
+# 📝 Transcribe with Whisper
+print("🔍 Transcribing...")
 model = whisper.load_model("tiny")
 result = model.transcribe(merged_filename)
 print("📝 Transcription:")
