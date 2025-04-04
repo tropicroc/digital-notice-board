@@ -4,6 +4,7 @@ import scipy.io.wavfile as wav
 import time
 import torch
 import whisper
+import os
 from speechbrain.pretrained import VAD
 
 # Constants
@@ -11,6 +12,7 @@ SAMPLE_RATE = 44100  # 44.1 kHz
 CHANNELS = 1  # Mono
 SILENCE_THRESHOLD = 5  # Stop after 5s of silence
 OUTPUT_FILENAME = "recorded_audio.wav"
+TEMP_VAD_FILE = "temp_vad.wav"
 
 # Load SpeechBrain VAD model
 vad = VAD.from_hparams(source="speechbrain/vad-crdnn-libriparty", savedir="tmp_vad")
@@ -30,11 +32,11 @@ def record_audio():
         audio_chunk = sd.rec(int(SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype=np.int16)
         sd.wait()
 
-        # Convert to float tensor for VAD
-        audio_float = torch.from_numpy(audio_chunk.astype(np.float32) / 32768.0)
+        # Save temporary file for VAD detection
+        wav.write(TEMP_VAD_FILE, SAMPLE_RATE, audio_chunk)
 
-        # Check if speech is detected
-        speech_prob = vad.get_speech_prob_file(audio_float.numpy(), SAMPLE_RATE)
+        # Check if speech is detected (using the saved file)
+        speech_prob = vad.get_speech_prob_file(TEMP_VAD_FILE)
 
         if speech_prob > 0.5:  # Speech detected
             if not recording:
@@ -48,6 +50,10 @@ def record_audio():
                 if silent_time >= SILENCE_THRESHOLD:
                     print("No speech detected for 5s, stopping recording...")
                     break
+
+    # Cleanup temp file
+    if os.path.exists(TEMP_VAD_FILE):
+        os.remove(TEMP_VAD_FILE)
 
     if not audio_buffer:
         print("No speech detected, exiting.")
