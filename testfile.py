@@ -1,90 +1,92 @@
 import sounddevice as sd
 import numpy as np
-import scipy.io.wavfile as wav
-import torchaudio
-import torch
-import os
+import threading
+import time
+from scipy.io.wavfile import write
 import whisper
-from speechbrain.pretrained import VAD
+from vad import EnergyVAD
 
-# Constants
-SAMPLE_RATE = 44100  # Original recording sample rate
-TARGET_SAMPLE_RATE = 16000  # SpeechBrain VAD expected sample rate
-CHANNELS = 1  # Mono
-SILENCE_THRESHOLD = 5  # Stop after 5s of silence
-OUTPUT_FILENAME = "recorded_audio.wav"
-TEMP_VAD_FILE = "temp_vad.wav"
+# Parameters
+sample_rate = 16000
+gain = 2.0
+chunk_duration = 5  # seconds
+merged_filename = 'final_clean_output.wav'
 
-# Load SpeechBrain VAD model
-vad = VAD.from_hparams(source="speechbrain/vad-crdnn-libriparty", savedir="tmp_vad")
+# Initialize VAD
+vad = EnergyVAD(
+    sample_rate=sample_rate,
+    frame_length=25,
+    frame_shift=20,
+    energy_threshold=0.05,
+    pre_emphasis=0.95
+)
 
-# Load Whisper model
-whisper_model = whisper.load_model("base")
+# Shared flags and data
+speech_detected = False
+stop_recording = False
+first_chunk_with_speech = None  # This will store the first detected speech chunk
 
-def resample_audio(audio, orig_sr, target_sr):
-    """Resample audio to the target sample rate using torchaudio."""
-    transform = torchaudio.transforms.Resample(orig_freq=orig_sr, new_freq=target_sr)
-    audio_tensor = torch.from_numpy(audio.astype(np.float32) / 32768.0)  # Normalize
-    resampled_audio = transform(audio_tensor)
-    return (resampled_audio.numpy() * 32768.0).astype(np.int16)  # Convert back to int16
+# VAD Monitor Thread
+def vad_monitor():
+    global speech_detected, stop_recording, first_chunk_with_speech
+    print("🔍 Waiting for speech to start recording...")
 
-def record_audio():
-    """Records audio when speech is detected and stops after 5s of silence."""
-    print("Listening for speech...")
-    audio_buffer = []
-    silent_time = 0
-    recording = False
-
-    while True:
-        # Capture 1 second of audio
-        audio_chunk = sd.rec(int(SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype=np.int16)
+    # Wait until speech is first detected
+    while not speech_detected:
+        audio = sd.rec(int(chunk_duration * sample_rate), samplerate=sample_rate, channels=1, dtype='float32')
         sd.wait()
-
-        # Resample to 16kHz for SpeechBrain VAD
-        resampled_chunk = resample_audio(audio_chunk, SAMPLE_RATE, TARGET_SAMPLE_RATE)
-
-        # Save temporary file for VAD detection
-        wav.write(TEMP_VAD_FILE, TARGET_SAMPLE_RATE, resampled_chunk)
-
-        # Check if speech is detected (using the resampled file)
-        speech_prob = vad.get_speech_prob_file(TEMP_VAD_FILE)
-
-        if speech_prob.mean() > 0.5:  # Fix: Extract mean probability
-            if not recording:
-                print("Speech detected, recording started...")
-                recording = True
-            audio_buffer.append(audio_chunk)  # Store original 44.1kHz audio
-            silent_time = 0  # Reset silence timer
+        audio *= gain
+        audio = np.clip(audio, -1.0, 1.0)
+        if np.any(vad(audio.flatten())):
+            speech_detected = True
+            first_chunk_with_speech = audio  # Save the first chunk with speech
+            print("✅ Speech detected! Starting actual recording...")
         else:
-            if recording:
-                silent_time += 1  # Increment silent seconds
-                if silent_time >= SILENCE_THRESHOLD:
-                    print("No speech detected for 5s, stopping recording...")
-                    break
+            print("⏳ No speech yet, checking again...")
 
-    # Cleanup temp file
-    if os.path.exists(TEMP_VAD_FILE):
-        os.remove(TEMP_VAD_FILE)
+    # Keep monitoring for silence while recording
+    while not stop_recording:
+        audio = sd.rec(int(chunk_duration * sample_rate), samplerate=sample_rate, channels=1, dtype='float32')
+        sd.wait()
+        audio *= gain
+        audio = np.clip(audio, -1.0, 1.0)
+        if not np.any(vad(audio.flatten())):
+            print("🛑 No speech detected for 5 seconds. Stopping recording...")
+            stop_recording = True
+        else:
+            print("🎙️ Still hearing speech... continuing.")
 
-    if not audio_buffer:
-        print("No speech detected, exiting.")
-        return None
+# Start VAD monitor thread
+vad_thread = threading.Thread(target=vad_monitor)
+vad_thread.start()
 
-    # Save recorded audio (original 44.1kHz for Whisper)
-    recorded_audio = np.concatenate(audio_buffer, axis=0)
-    wav.write(OUTPUT_FILENAME, SAMPLE_RATE, recorded_audio)
-    print(f"Audio saved as {OUTPUT_FILENAME}")
+# Wait for speech to be detected
+while not speech_detected:
+    time.sleep(0.1)
 
-    return OUTPUT_FILENAME
+# Start continuous recording
+recorded_audio = [first_chunk_with_speech]  # Include the first 5-sec detected chunk
+stream = sd.InputStream(samplerate=sample_rate, channels=1, dtype='float32')
+stream.start()
+print("🎧 Recording...")
 
-def transcribe_audio(filename):
-    """Transcribes recorded audio using Whisper."""
-    print("Transcribing audio...")
-    result = whisper_model.transcribe(filename)
-    print("Transcription:", result["text"])
-    return result["text"]
+while not stop_recording:
+    audio_chunk, _ = stream.read(int(0.5 * sample_rate))  # 0.5 sec chunks
+    audio_chunk *= gain
+    audio_chunk = np.clip(audio_chunk, -1.0, 1.0)
+    recorded_audio.append(audio_chunk)
 
-# Run the recording and transcription
-audio_file = record_audio()
-if audio_file:
-    transcribe_audio(audio_file)
+stream.stop()
+stream.close()
+print("✅ Recording stopped.")
+
+# Merge and save final audio
+final_audio = np.concatenate(recorded_audio, axis=0)
+write(merged_filename, sample_rate, final_audio.astype(np.float32))
+print(f"💾 Final audio saved as {merged_filename}")
+
+# Transcribe with Whisper
+model = whisper.load_model("tiny")
+result = model.transcribe(merged_filename)
+print("📝 Transcription:")
+print(result['text'])
