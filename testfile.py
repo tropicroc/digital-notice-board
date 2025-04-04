@@ -16,7 +16,7 @@ def find_input_device():
     raise RuntimeError("❌ No input audio device found.")
 
 # Parameters
-sample_rate = 16000
+sample_rate = 44100
 mic_device_index = find_input_device()
 gain = 2.0
 chunk_duration = 5  # seconds
