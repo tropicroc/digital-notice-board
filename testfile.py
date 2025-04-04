@@ -9,7 +9,6 @@ from vad import EnergyVAD
 
 # Parameters
 sample_rate = 44100
-gain = 2.0
 chunk_duration = 5  # seconds
 merged_filename = 'final_clean_output.wav'
 
@@ -35,51 +34,19 @@ def vad_monitor():
     # Wait until speech is first detected
     while not speech_detected:
         audio = sd.rec(int(chunk_duration * sample_rate), samplerate=sample_rate, channels=1, dtype='float32')
-
-
-
         sd.wait()
-        audio *= gain
         audio = np.clip(audio, -1.0, 1.0)
         if np.any(vad(audio.flatten())):
             speech_detected = True
             first_chunk_with_speech = audio  # Save the first chunk with speech
             print("✅ Speech detected! Starting actual recording...")
-
-
-
-
-
-
-
-
-
-
         else:
             print("⏳ No speech yet, checking again...")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     # Keep monitoring for silence while recording
     while not stop_recording:
         audio = sd.rec(int(chunk_duration * sample_rate), samplerate=sample_rate, channels=1, dtype='float32')
         sd.wait()
-        audio *= gain
         audio = np.clip(audio, -1.0, 1.0)
         if not np.any(vad(audio.flatten())):
             print("🛑 No speech detected for 5 seconds. Stopping recording...")
@@ -103,7 +70,6 @@ print("🎧 Recording...")
 
 while not stop_recording:
     audio_chunk, _ = stream.read(int(0.5 * sample_rate))  # 0.5 sec chunks
-    audio_chunk *= gain
     audio_chunk = np.clip(audio_chunk, -1.0, 1.0)
     recorded_audio.append(audio_chunk)
 
