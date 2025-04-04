@@ -6,23 +6,35 @@ from scipy.io.wavfile import write
 import whisper
 from vad import EnergyVAD
 
-# Automatically find a working input device (microphone)
-def find_input_device():
-    devices = sd.query_devices()
-    for idx, dev in enumerate(devices):
-        if dev['max_input_channels'] > 0:
-            print(f"🎤 Found input device #{idx}: {dev['name']}")
-            return idx
-    raise RuntimeError("❌ No input audio device found.")
-
-# Parameters
-sample_rate = 44100
-mic_device_index = find_input_device()
-gain = 2.0
+# =============================
+# Configuration Parameters
+# =============================
+sample_rate = 16000
 chunk_duration = 5  # seconds
+gain = 2.0
 merged_filename = 'final_clean_output.wav'
 
+# =============================
+# Detect Input Device Index
+# =============================
+def get_input_device_index():
+    devices = sd.query_devices()
+    for idx, device in enumerate(devices):
+        if device['max_input_channels'] > 0:
+            print(f"Input Device Found - Index {idx}: {device['name']}")
+    try:
+        default = sd.default.device[0]  # Default input device index
+        print(f"Using default input device index: {default}")
+        return default
+    except Exception as e:
+        print("Error detecting input device. Please specify manually.")
+        raise e
+
+mic_device_index = get_input_device_index()
+
+# =============================
 # Initialize VAD
+# =============================
 vad = EnergyVAD(
     sample_rate=sample_rate,
     frame_length=25,
@@ -31,18 +43,20 @@ vad = EnergyVAD(
     pre_emphasis=0.95
 )
 
-# Shared flags and data
 speech_detected = False
 stop_recording = False
-first_chunk_with_speech = None  # This will store the first detected speech chunk
+first_chunk_with_speech = None
 
+# =============================
 # VAD Monitor Thread
+# =============================
 def vad_monitor():
     global speech_detected, stop_recording, first_chunk_with_speech
     print("🔍 Waiting for speech to start recording...")
 
     while not speech_detected:
-        audio = sd.rec(int(chunk_duration * sample_rate), samplerate=sample_rate, channels=1, dtype='float32', device=mic_device_index)
+        audio = sd.rec(int(chunk_duration * sample_rate), samplerate=sample_rate,
+                      channels=1, dtype='float32', device=mic_device_index)
         sd.wait()
         audio *= gain
         audio = np.clip(audio, -1.0, 1.0)
@@ -53,8 +67,10 @@ def vad_monitor():
         else:
             print("⏳ No speech yet, checking again...")
 
+    # Monitor for silence
     while not stop_recording:
-        audio = sd.rec(int(chunk_duration * sample_rate), samplerate=sample_rate, channels=1, dtype='float32', device=mic_device_index)
+        audio = sd.rec(int(chunk_duration * sample_rate), samplerate=sample_rate,
+                      channels=1, dtype='float32', device=mic_device_index)
         sd.wait()
         audio *= gain
         audio = np.clip(audio, -1.0, 1.0)
@@ -64,22 +80,25 @@ def vad_monitor():
         else:
             print("🎙️ Still hearing speech... continuing.")
 
-# Start VAD monitor thread
+# Start VAD thread
 vad_thread = threading.Thread(target=vad_monitor)
 vad_thread.start()
 
-# Wait for speech to be detected
+# Wait until speech is detected
 while not speech_detected:
     time.sleep(0.1)
 
-# Start continuous recording
+# =============================
+# Recording Actual Audio
+# =============================
 recorded_audio = [first_chunk_with_speech]
-stream = sd.InputStream(samplerate=sample_rate, channels=1, dtype='float32', device=mic_device_index)
+stream = sd.InputStream(samplerate=sample_rate, channels=1,
+                        dtype='float32', device=mic_device_index)
 stream.start()
-print("🎧 Recording...")
+print("🎧 Recording started...")
 
 while not stop_recording:
-    audio_chunk, _ = stream.read(int(0.5 * sample_rate))
+    audio_chunk, _ = stream.read(int(0.5 * sample_rate))  # 0.5 sec chunks
     audio_chunk *= gain
     audio_chunk = np.clip(audio_chunk, -1.0, 1.0)
     recorded_audio.append(audio_chunk)
@@ -88,12 +107,16 @@ stream.stop()
 stream.close()
 print("✅ Recording stopped.")
 
-# Merge and save final audio
+# =============================
+# Save Final Audio
+# =============================
 final_audio = np.concatenate(recorded_audio, axis=0)
 write(merged_filename, sample_rate, final_audio.astype(np.float32))
 print(f"💾 Final audio saved as {merged_filename}")
 
+# =============================
 # Transcribe with Whisper
+# =============================
 model = whisper.load_model("tiny")
 result = model.transcribe(merged_filename)
 print("📝 Transcription:")
