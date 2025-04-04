@@ -49,7 +49,7 @@ def record_audio():
         # Check if speech is detected (using the resampled file)
         speech_prob = vad.get_speech_prob_file(TEMP_VAD_FILE)
 
-        if speech_prob > 0.5:  # Speech detected
+        if speech_prob.mean() > 0.5:  # Fix: Extract mean probability
             if not recording:
                 print("Speech detected, recording started...")
                 recording = True
