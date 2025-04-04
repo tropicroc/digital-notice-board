@@ -13,7 +13,7 @@ vad = VAD.from_hparams(source="speechbrain/vad-crdnn-libriparty", savedir="tmp_v
 model = whisper.load_model("tiny")
 
 # Audio settings
-SAMPLE_RATE = 16000
+SAMPLE_RATE = 44100
 CHANNELS = 1
 BUFFER_DURATION = 1  # Process audio every 1 second
 SILENCE_THRESHOLD = 5  # Stop recording after 5 seconds of silence
