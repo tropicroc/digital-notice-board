@@ -7,12 +7,12 @@ import whisper
 from vad import EnergyVAD
 
 # Parameters
-rate = 44100
+sample_rate = 44100
 dur = 5  # seconds
 totranscribe = 'transcribex.wav'
 
 vad = EnergyVAD(
-    rate=rate,
+    sample_rate=sample_rate,
     frame_length=25,
     frame_shift=20,
     energy_threshold=0.05,
@@ -28,7 +28,7 @@ def vad_monitor():
     print("Waiting for speech to start recording...")
 
     while not speech_detected:
-        audio = sd.rec(int(dur * rate), samplerate=rate, channels=1, dtype='float32')
+        audio = sd.rec(int(dur * sample_rate), samplesample_rate=sample_rate, channels=1, dtype='float32')
         sd.wait()
         audio = np.clip(audio, -1.0, 1.0)
         if np.any(vad(audio.flatten())):
@@ -39,7 +39,7 @@ def vad_monitor():
             print("No speech yet, checking again...")
 
     while not stop_recording:
-        audio = sd.rec(int(dur * rate), samplerate=rate, channels=1, dtype='float32')
+        audio = sd.rec(int(dur * sample_rate), samplesample_rate=sample_rate, channels=1, dtype='float32')
         sd.wait()
         audio = np.clip(audio, -1.0, 1.0)
         if not np.any(vad(audio.flatten())):
@@ -55,12 +55,12 @@ while not speech_detected:
     time.sleep(0.1)
 
 recorded_audio = [first_chunk_with_speech]  # Include the first 5-sec detected chunk
-stream = sd.InputStream(samplerate=rate, channels=1, dtype='float32')
+stream = sd.InputStream(samplesample_rate=sample_rate, channels=1, dtype='float32')
 stream.start()
 print("🎧 Recording...")
 
 while not stop_recording:
-    audio_chunk, _ = stream.read(int(0.5 * rate))  # 0.5 sec chunks
+    audio_chunk, _ = stream.read(int(0.5 * sample_rate))  # 0.5 sec chunks
     audio_chunk = np.clip(audio_chunk, -1.0, 1.0)
     recorded_audio.append(audio_chunk)
 
@@ -69,7 +69,7 @@ stream.close()
 print("✅ Recording stopped.")
 
 final_audio = np.concatenate(recorded_audio, axis=0)
-write(totranscribe, rate, final_audio.astype(np.float32))
+write(totranscribe, sample_rate, final_audio.astype(np.float32))
 print(f"💾 Final audio saved as {totranscribe}")
 
 model = whisper.load_model("tiny")
